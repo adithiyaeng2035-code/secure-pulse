@@ -10,13 +10,20 @@ from app import (
     REMOTE_CHAT_DISABLED_MESSAGE,
     check_chatbot,
     get_api_url,
+    get_api_headers,
     get_chat_api_url,
     is_bind_address_allowed,
     is_loopback_bind_address,
+    request_prediction,
     request_chat_answer,
 )
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
+PAGES_PATH = Path(__file__).resolve().parents[1] / "pages"
+LIVE_PAGE_PATH = PAGES_PATH / "2_Live_Screening.py"
+PATIENTS_PAGE_PATH = PAGES_PATH / "1_Synthetic_Patients.py"
+HISTORY_PAGE_PATH = PAGES_PATH / "3_Patient_History.py"
+CHATBOT_PAGE_PATH = PAGES_PATH / "4_Chatbot.py"
 
 
 def mock_backend(monkeypatch, *, audit_error=None):
@@ -62,7 +69,7 @@ def mock_backend(monkeypatch, *, audit_error=None):
 
 def run_app(monkeypatch, tmp_path):
     mock_backend(monkeypatch)
-    return AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    return AppTest.from_file(str(LIVE_PAGE_PATH), default_timeout=30).run()
 
 
 def test_loopback_bind_address_check():
@@ -89,6 +96,35 @@ def test_remote_backend_requires_https(monkeypatch):
 
     monkeypatch.setenv("SECUREPULSE_API_URL", "https://api.example.com")
     assert get_api_url() == "https://api.example.com"
+
+
+def test_remote_backend_requires_token_and_sends_it(monkeypatch):
+    monkeypatch.setenv("SECUREPULSE_API_URL", "https://api.example.com")
+    monkeypatch.delenv("SECUREPULSE_API_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="SECUREPULSE_API_TOKEN"):
+        get_api_headers()
+
+    monkeypatch.setenv("SECUREPULSE_API_TOKEN", "test-secret-token")
+    assert get_api_headers() == {"Authorization": "Bearer test-secret-token"}
+
+
+def test_remote_prediction_sends_bearer_token(monkeypatch):
+    monkeypatch.setenv("SECUREPULSE_API_URL", "https://api.example.com")
+    monkeypatch.setenv("SECUREPULSE_API_TOKEN", "test-secret-token")
+    response = httpx.Response(
+        200,
+        json={"risk_band": "Low"},
+        request=httpx.Request("POST", "https://api.example.com/predict"),
+    )
+    post = Mock(return_value=response)
+    monkeypatch.setattr(httpx, "post", post)
+
+    request_prediction({"age": 45})
+
+    assert post.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer test-secret-token"
+    }
 
 
 def test_chatbot_is_disabled_for_remote_backend(monkeypatch):
@@ -143,11 +179,11 @@ def test_screening_submission_returns_results_and_logs_demo_event(
     assert not app.exception
     metrics = {metric.label: metric.value for metric in app.metric}
     assert set(metrics) == {
-        "Synthetic submissions this session",
         "Model risk band",
         "Synthetic-model estimate",
+        "Submissions this session",
     }
-    assert metrics["Synthetic submissions this session"] == "1"
+    assert metrics["Submissions this session"] == "1"
     assert metrics["Model risk band"] in {"Low", "Moderate", "High"}
     assert 0 <= float(metrics["Synthetic-model estimate"].rstrip("%")) <= 100
     assert any(
@@ -208,14 +244,16 @@ def test_app_does_not_collect_patient_identifiers_or_display_secrets(
         for label in input_labels
         for identifier in ("patient id", "name", "email", "phone", "ssn")
     )
-    rendered_markdown = " ".join(element.value for element in app.markdown)
-    assert "does not collect patient identifiers" in rendered_markdown
+    rendered_markdown = " ".join(
+        [*(element.value for element in app.markdown), *(element.value for element in app.caption)]
+    )
+    assert "synthetic profile" in rendered_markdown.lower()
     assert "SYN-" not in rendered_markdown
     assert not app.exception
 
 
 def test_synthetic_patients_page_shows_dataset_size(monkeypatch, tmp_path):
-    app = run_app(monkeypatch, tmp_path)
+    app = AppTest.from_file(str(PATIENTS_PAGE_PATH), default_timeout=30).run()
 
     assert any(
         "Dataset contains 50,000 synthetic profiles" in item.value
@@ -223,8 +261,58 @@ def test_synthetic_patients_page_shows_dataset_size(monkeypatch, tmp_path):
     )
 
 
+def test_patient_history_page_shows_empty_session_message():
+    app = AppTest.from_file(str(HISTORY_PAGE_PATH), default_timeout=30).run()
+
+    assert not app.exception
+    assert any(
+        "No synthetic prediction results in this browser session yet." in item.value
+        for item in app.info
+    )
+
+
+def test_patient_history_page_shows_session_prediction_summaries():
+    app = AppTest.from_file(str(HISTORY_PAGE_PATH), default_timeout=30)
+    app.session_state["prediction_history"] = [
+        {
+            "submitted_at": "2026-10-18T00:00:00+00:00",
+            "risk_band": "Moderate",
+            "risk_probability": 0.42,
+            "is_anomaly": False,
+            "anomaly_score": 0.1,
+            "audit_sequence": 1,
+            "audit_error": None,
+        },
+        {
+            "submitted_at": "2026-10-18T01:00:00+00:00",
+            "risk_band": "High",
+            "risk_probability": 0.72,
+            "is_anomaly": True,
+            "anomaly_score": -0.2,
+            "audit_sequence": 2,
+            "audit_error": None,
+        },
+    ]
+    app.run()
+
+    assert not app.exception
+    assert len(app.dataframe) == 1
+    assert list(app.dataframe[0].value.columns) == [
+        "Submission",
+        "Submitted (UTC)",
+        "Risk band",
+        "Synthetic estimate",
+        "Anomaly flagged",
+    ]
+    assert app.dataframe[0].value["Risk band"].tolist() == ["Moderate", "High"]
+    assert not any(
+        "Submit another synthetic reading" in item.value for item in app.info
+    )
+
+
 def test_chatbot_page_explains_ollama_is_not_running(monkeypatch, tmp_path):
-    app = run_app(monkeypatch, tmp_path)
+    mock_backend(monkeypatch)
+    app = AppTest.from_file(str(CHATBOT_PAGE_PATH), default_timeout=30).run()
 
     assert any(
         "Local AI chatbot unavailable" in item.value for item in app.warning
@@ -234,7 +322,8 @@ def test_chatbot_page_explains_ollama_is_not_running(monkeypatch, tmp_path):
 
 def test_chatbot_page_explains_remote_api_restriction(monkeypatch, tmp_path):
     monkeypatch.setenv("SECUREPULSE_API_URL", "https://api.example.com")
-    app = run_app(monkeypatch, tmp_path)
+    mock_backend(monkeypatch)
+    app = AppTest.from_file(str(CHATBOT_PAGE_PATH), default_timeout=30).run()
 
     assert any(
         REMOTE_CHAT_DISABLED_MESSAGE in item.value for item in app.warning
@@ -244,7 +333,7 @@ def test_chatbot_page_explains_remote_api_restriction(monkeypatch, tmp_path):
 
 def test_app_surfaces_audit_chain_corruption(monkeypatch, tmp_path):
     mock_backend(monkeypatch, audit_error="Local demo audit chain integrity check failed.")
-    app = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    app = AppTest.from_file(str(LIVE_PAGE_PATH), default_timeout=30).run()
     app.button[0].click().run()
 
     assert len(app.metric) == 3
@@ -300,7 +389,7 @@ def test_backend_disconnect_is_reported_and_does_not_add_history(monkeypatch, tm
 
     monkeypatch.setattr(httpx, "get", fail_health)
     monkeypatch.setattr(httpx, "post", fail_health)
-    app = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    app = AppTest.from_file(str(LIVE_PAGE_PATH), default_timeout=30).run()
 
     assert any("backend disconnected" in item.value.lower() for item in app.error)
     app.button[0].click().run()

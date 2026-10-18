@@ -52,14 +52,56 @@ offline, the UI reports the connection failure and does not fall back to running
 the models itself. Set `SECUREPULSE_API_URL` only when intentionally changing the
 API address; use loopback for this local demo.
 
+Use the Streamlit sidebar to navigate between the overview, synthetic profiles,
+live screening, session history, and chatbot pages. Screening requests go through
+the configured FastAPI backend. History is shared across pages within the active
+Streamlit session, contains prediction summaries only, and is not persisted.
+
+## Hosted FastAPI backend on AWS App Runner
+
+The API can be deployed separately from the Streamlit UI. The API Dockerfile
+trains models from generated synthetic data when the image is built and starts
+FastAPI on App Runner's `PORT`. Do not deploy a public API without enabling its
+bearer-token check.
+
+1. Create a random token, for example with
+   `python -c "import secrets; print(secrets.token_urlsafe(32))"`, and store it
+   in AWS Secrets Manager. Do not commit it or paste it into a source file.
+2. In AWS App Runner, create a service named `adithiya` from this GitHub
+   repository and branch. Select the `Dockerfile.api` Dockerfile, use port
+   `8080`, and configure
+   `SECUREPULSE_REQUIRE_API_TOKEN=1`. Configure `SECUREPULSE_API_TOKEN` as a
+   Secrets Manager-backed environment variable, and grant the App Runner
+   instance role permission to retrieve that secret.
+3. Configure the service health check to use `GET /health`. After deployment,
+   copy the HTTPS service URL. The health route is public; prediction and chat
+   POST routes require the bearer token.
+4. To use the hosted API from a locally running Streamlit UI, set these values
+   in the same PowerShell terminal before `streamlit run app.py`:
+
+   ```powershell
+   $env:SECUREPULSE_API_URL = "https://YOUR-APP-RUNNER-URL"
+   $env:SECUREPULSE_API_TOKEN = "YOUR-SECRET-TOKEN"
+   streamlit run app.py
+   ```
+
+The Streamlit process sends the token server-to-server over HTTPS; it is not
+placed in browser code. Keep the UI local or behind verified user
+authentication. This API token is a shared credential, not per-user identity
+or rate limiting; rotate it if exposed. Do not submit real patient data.
+
 ## SecurePulse chatbot (local Ollama)
 
-The Chatbot page answers questions about this project, its generated dataset,
-local setup, and demo outputs. It does not receive prediction readings, patient
-names, or prediction history. Chat text and responses remain in the current
-Streamlit session memory and are sent through the local loopback API to local
-Ollama. Chat is disabled when `SECUREPULSE_API_URL` points to a remote server.
-Do not enter personal, patient, or confidential data.
+The Chatbot page answers questions about all aspects of this project, including
+its code, generated dataset, model training, API, tests, local setup, and demo
+outputs. It retrieves relevant sections from this README and selected source files
+for each question and supplies them to the local model as reference context. This
+grounds answers in project documentation; it does not fine-tune or retrain the
+model. It does not read the patient CSV, prediction readings, names, or prediction
+history. Chat text and responses remain in the current Streamlit session memory
+and are sent through the local loopback API to local Ollama. Chat is disabled
+when `SECUREPULSE_API_URL` points to a remote server. Do not enter personal,
+patient, or confidential data.
 
 Install Ollama separately, start its local service, then pull the default model:
 
@@ -71,7 +113,8 @@ Start the backend and frontend as above. The page reports when Ollama is missing
 the model is not installed, or the chatbot request fails. To choose a different
 locally installed model, set `SECUREPULSE_OLLAMA_MODEL` before starting the API.
 The Ollama URL is restricted to loopback so chat text is not sent to a remote
-provider. This chatbot is optional and does not provide medical advice.
+provider. Inference uses a 2,048-token context. This chatbot is optional and does
+not provide medical advice.
 
 This is a local service connection, not a cloud deployment or a persistent
 database. Submitted readings remain in process memory; the audit SQLite file is
@@ -117,9 +160,13 @@ version control accidentally; `.gitignore` does not remove files already tracked
 
 ## Project layout
 
-- `app.py` — local Streamlit interface with Synthetic Patients, Live, and History tabs.
+- `app.py` — SecurePulse overview and connection health.
+- `pages/1_Synthetic_Patients.py` — browse generated synthetic profiles.
+- `pages/2_Live_Screening.py` — submit a synthetic reading to the FastAPI backend.
+- `pages/3_Patient_History.py` — session-only prediction summaries.
+- `pages/4_Chatbot.py` — local Ollama-backed project assistant.
 - `modules/api.py` — local FastAPI prediction engine used by the Streamlit frontend.
-- `modules/chatbot.py` — scoped, loopback-only client for an optional Ollama chatbot.
+- `modules/chatbot.py` — scoped local Ollama client with README-grounded retrieval.
 - `generate_data.py` — deterministic synthetic dataset generator.
 - `train_model.py` — trains and stores the risk and anomaly models.
 - `modules/data_processor.py` — feature schema and input validation.
