@@ -170,6 +170,15 @@ def test_app_does_not_collect_patient_identifiers_or_display_secrets(
     assert not app.exception
 
 
+def test_synthetic_patients_page_shows_dataset_size(monkeypatch, tmp_path):
+    app = run_app(monkeypatch, tmp_path)
+
+    assert any(
+        "Dataset contains 50,000 synthetic profiles" in item.value
+        for item in app.caption
+    )
+
+
 def test_app_surfaces_audit_chain_corruption(monkeypatch, tmp_path):
     mock_backend(monkeypatch, audit_error="Local demo audit chain integrity check failed.")
     app = AppTest.from_file(str(APP_PATH), default_timeout=30).run()

@@ -143,7 +143,7 @@ feature. It is synthetic-demo-only; do not use it to audit real patient activity
 ## Regenerate data and models
 
 ```powershell
-python generate_data.py --samples 10000 --seed 42
+python generate_data.py --samples 50000 --seed 42
 python train_model.py
 ```
 

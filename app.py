@@ -119,10 +119,6 @@ def main() -> None:
 
     with patients_tab:
         st.subheader("Synthetic patient profiles")
-        st.caption(
-            "These rows are generated demo data, not real people. Only the first "
-            "20 records are shown."
-        )
         if not DATA_PATH.is_file():
             st.error(f"Synthetic dataset not found at {DATA_PATH}. Run `python generate_data.py`.")
         else:
@@ -131,6 +127,10 @@ def main() -> None:
             except (OSError, ValueError, pd.errors.ParserError) as error:
                 st.error(f"Could not load the synthetic patient sample: {error}")
             else:
+                st.caption(
+                    f"Dataset contains {len(patient_data):,} synthetic profiles; "
+                    "showing the first 20. These are not real people."
+                )
                 patient_data = patient_data.head(20).rename(
                     columns={"patient_id": "Synthetic demo ID"}
                 )

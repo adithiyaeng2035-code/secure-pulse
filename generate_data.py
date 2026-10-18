@@ -15,7 +15,7 @@ DEFAULT_OUTPUT = ROOT / "data" / "synthetic_patient_data.csv"
 
 
 def generate_synthetic_data(
-    n_samples: int = 10_000, *, random_state: int = 42
+    n_samples: int = 50_000, *, random_state: int = 42
 ) -> pd.DataFrame:
     """Create synthetic measurements and a probabilistic risk label."""
     if n_samples < 100:
@@ -66,7 +66,7 @@ def generate_synthetic_data(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--samples", type=int, default=10_000)
+    parser.add_argument("--samples", type=int, default=50_000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
