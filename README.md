@@ -52,6 +52,27 @@ offline, the UI reports the connection failure and does not fall back to running
 the models itself. Set `SECUREPULSE_API_URL` only when intentionally changing the
 API address; use loopback for this local demo.
 
+## SecurePulse chatbot (local Ollama)
+
+The Chatbot page answers questions about this project, its generated dataset,
+local setup, and demo outputs. It does not receive prediction readings, patient
+names, or prediction history. Chat text and responses remain in the current
+Streamlit session memory and are sent through the local loopback API to local
+Ollama. Chat is disabled when `SECUREPULSE_API_URL` points to a remote server.
+Do not enter personal, patient, or confidential data.
+
+Install Ollama separately, start its local service, then pull the default model:
+
+```powershell
+ollama pull llama3.2:3b
+```
+
+Start the backend and frontend as above. The page reports when Ollama is missing,
+the model is not installed, or the chatbot request fails. To choose a different
+locally installed model, set `SECUREPULSE_OLLAMA_MODEL` before starting the API.
+The Ollama URL is restricted to loopback so chat text is not sent to a remote
+provider. This chatbot is optional and does not provide medical advice.
+
 This is a local service connection, not a cloud deployment or a persistent
 database. Submitted readings remain in process memory; the audit SQLite file is
 local and is not a distributed ledger. Never send real patient data to this demo.
@@ -98,6 +119,7 @@ version control accidentally; `.gitignore` does not remove files already tracked
 
 - `app.py` — local Streamlit interface with Synthetic Patients, Live, and History tabs.
 - `modules/api.py` — local FastAPI prediction engine used by the Streamlit frontend.
+- `modules/chatbot.py` — scoped, loopback-only client for an optional Ollama chatbot.
 - `generate_data.py` — deterministic synthetic dataset generator.
 - `train_model.py` — trains and stores the risk and anomaly models.
 - `modules/data_processor.py` — feature schema and input validation.

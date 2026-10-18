@@ -11,12 +11,17 @@ import httpx
 import pandas as pd
 import streamlit as st
 
+from modules.chatbot import DEFAULT_OLLAMA_MODEL, MAX_QUERY_LENGTH
 from modules.data_processor import FEATURE_COLUMNS
 
 st.set_page_config(page_title="SecurePulse", page_icon="🫀", layout="wide")
 
 STYLESHEET_PATH = Path(__file__).resolve().parent / "assets" / "securepulse.css"
 DATA_PATH = Path(__file__).resolve().parent / "data" / "synthetic_patient_data.csv"
+REMOTE_CHAT_DISABLED_MESSAGE = (
+    "Chat is disabled for remote prediction APIs. Configure "
+    "SECUREPULSE_API_URL to a loopback address to keep chat on this device."
+)
 
 
 def is_loopback_bind_address(address: str | None) -> bool:
@@ -54,6 +59,14 @@ def get_api_url() -> str:
     return api_url
 
 
+def get_chat_api_url() -> str:
+    api_url = get_api_url()
+    hostname = urlsplit(api_url).hostname or ""
+    if hostname != "localhost" and not is_loopback_bind_address(hostname):
+        raise ValueError(REMOTE_CHAT_DISABLED_MESSAGE)
+    return api_url
+
+
 def load_stylesheet() -> None:
     stylesheet = STYLESHEET_PATH.read_text(encoding="utf-8")
     st.markdown(f"<style>{stylesheet}</style>", unsafe_allow_html=True)
@@ -80,6 +93,32 @@ def request_prediction(record: dict[str, int | float]) -> dict[str, object]:
     return response.json()
 
 
+def check_chatbot() -> dict[str, str | bool]:
+    try:
+        response = httpx.get(f"{get_chat_api_url()}/chat/health", timeout=3)
+        response.raise_for_status()
+        status = response.json()
+        if not isinstance(status, dict) or "available" not in status:
+            return {
+                "available": False,
+                "model": "",
+                "detail": "The backend returned an invalid chatbot status.",
+            }
+        return status
+    except (httpx.HTTPError, ValueError) as error:
+        return {"available": False, "model": "", "detail": str(error)}
+
+
+def request_chat_answer(query: str) -> dict[str, str]:
+    response = httpx.post(
+        f"{get_chat_api_url()}/chat",
+        json={"query": query},
+        timeout=95,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def main() -> None:
     bind_address = st.get_option("server.address")
     allow_remote = os.environ.get("SECUREPULSE_ALLOW_REMOTE") == "1"
@@ -94,6 +133,8 @@ def main() -> None:
     load_stylesheet()
     if "prediction_history" not in st.session_state:
         st.session_state.prediction_history = []
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
 
     st.title("SecurePulse")
     st.subheader("Cardiometabolic risk screening demo")
@@ -113,8 +154,8 @@ def main() -> None:
     else:
         st.success("Prediction backend connected — synthetic engine is ready.")
 
-    patients_tab, live_tab, history_tab = st.tabs(
-        ["Synthetic Patients", "Live", "History"]
+    patients_tab, live_tab, history_tab, chatbot_tab = st.tabs(
+        ["Synthetic Patients", "Live", "History", "Chatbot"]
     )
 
     with patients_tab:
@@ -339,6 +380,64 @@ def main() -> None:
                 "Streamlit retains active widget values in memory while the session is open. "
                 "Raw readings are not copied into history or the audit chain."
             )
+
+    with chatbot_tab:
+        st.subheader("SecurePulse assistant")
+        st.caption(
+            "Ask about this project, its synthetic dataset, setup, or demo outputs. "
+            "Do not enter patient names, readings, or other personal information. "
+            "The assistant cannot provide medical advice. Each question is answered "
+            "independently; previous messages are not sent again."
+        )
+        chat_status = check_chatbot()
+        if chat_status["available"]:
+            st.success(f"Local Ollama connected — model {chat_status['model']}.")
+        else:
+            st.warning(
+                f"Local AI chatbot unavailable: {chat_status['detail']}"
+            )
+            if chat_status["detail"] != REMOTE_CHAT_DISABLED_MESSAGE:
+                st.info(
+                    "Install Ollama, start its local service, and pull the model "
+                    "to enable answers."
+                )
+                st.code(f"ollama pull {DEFAULT_OLLAMA_MODEL}")
+
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        prompt = st.chat_input(
+            "Ask about SecurePulse",
+            max_chars=MAX_QUERY_LENGTH,
+            disabled=not bool(chat_status["available"]),
+        )
+        if prompt:
+            st.session_state.chat_messages.append(
+                {"role": "user", "content": prompt}
+            )
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                with st.spinner("Asking the local Ollama model..."):
+                    try:
+                        answer = request_chat_answer(prompt)
+                    except httpx.HTTPStatusError as error:
+                        st.error(
+                            f"Chat backend error: {error.response.text}"
+                        )
+                    except httpx.HTTPError as error:
+                        st.error(f"Could not reach the chat backend: {error}")
+                    else:
+                        st.markdown(answer["answer"])
+                        st.session_state.chat_messages.append(
+                            {"role": "assistant", "content": answer["answer"]}
+                        )
+        if st.session_state.chat_messages and st.button(
+            "Clear chat", key="clear_chat"
+        ):
+            st.session_state.chat_messages.clear()
+            st.rerun()
 
     with st.expander("Privacy notes"):
             st.write(

@@ -12,6 +12,13 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from modules.anomaly_detection import detect_anomaly, load_anomaly_model
+from modules.chatbot import (
+    MAX_QUERY_LENGTH,
+    OllamaUnavailableError,
+    ask_ollama,
+    check_ollama,
+    get_ollama_config,
+)
 from modules.data_processor import DataValidationError, prepare_patient_record
 from modules.risk_prediction import load_risk_model, predict_risk
 from modules.synthetic_audit import (
@@ -58,6 +65,17 @@ class PredictionResponse(BaseModel):
     audit_error: str | None
 
 
+class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=MAX_QUERY_LENGTH)
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    model: str
+
+
 @lru_cache(maxsize=1)
 def get_models() -> tuple[Any, Any]:
     return load_risk_model(), load_anomaly_model()
@@ -70,6 +88,23 @@ def health() -> dict[str, str]:
     except (FileNotFoundError, OSError, ValueError) as error:
         raise HTTPException(status_code=503, detail=f"Model engine unavailable: {error}") from error
     return {"status": "ok", "engine": "synthetic-risk-api"}
+
+
+@app.get("/chat/health")
+def chat_health() -> dict[str, str | bool]:
+    return check_ollama()
+
+
+@app.post("/chat", response_model=ChatResponse)
+def create_chat_response(request: ChatRequest) -> ChatResponse:
+    try:
+        answer = ask_ollama(request.query)
+        _, model = get_ollama_config()
+    except OllamaUnavailableError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return ChatResponse(answer=answer, model=model)
 
 
 @app.post("/predict", response_model=PredictionResponse)

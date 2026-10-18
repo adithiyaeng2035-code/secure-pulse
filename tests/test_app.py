@@ -2,10 +2,19 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import httpx
+import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from app import get_api_url, is_bind_address_allowed, is_loopback_bind_address
+from app import (
+    REMOTE_CHAT_DISABLED_MESSAGE,
+    check_chatbot,
+    get_api_url,
+    get_chat_api_url,
+    is_bind_address_allowed,
+    is_loopback_bind_address,
+    request_chat_answer,
+)
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 
@@ -16,6 +25,15 @@ def mock_backend(monkeypatch, *, audit_error=None):
         200,
         json={"status": "ok", "engine": "synthetic-risk-api"},
         request=request,
+    )
+    chat_health_response = httpx.Response(
+        200,
+        json={
+            "available": False,
+            "model": "llama3.2:3b",
+            "detail": "Ollama is not running at http://127.0.0.1:11434.",
+        },
+        request=httpx.Request("GET", "http://127.0.0.1/chat/health"),
     )
     sequences = iter(range(1, 100))
 
@@ -35,7 +53,10 @@ def mock_backend(monkeypatch, *, audit_error=None):
             request=httpx.Request("POST", url),
         )
 
-    monkeypatch.setattr(httpx, "get", Mock(return_value=health_response))
+    def get_status(url, **kwargs):
+        return chat_health_response if url.endswith("/chat/health") else health_response
+
+    monkeypatch.setattr(httpx, "get", Mock(side_effect=get_status))
     monkeypatch.setattr(httpx, "post", Mock(side_effect=post_prediction))
 
 
@@ -68,6 +89,29 @@ def test_remote_backend_requires_https(monkeypatch):
 
     monkeypatch.setenv("SECUREPULSE_API_URL", "https://api.example.com")
     assert get_api_url() == "https://api.example.com"
+
+
+def test_chatbot_is_disabled_for_remote_backend(monkeypatch):
+    monkeypatch.setenv("SECUREPULSE_API_URL", "https://api.example.com")
+
+    with pytest.raises(ValueError, match="remote prediction APIs"):
+        get_chat_api_url()
+
+    status = check_chatbot()
+
+    assert status["available"] is False
+    assert status["detail"] == REMOTE_CHAT_DISABLED_MESSAGE
+
+
+def test_chat_request_does_not_send_to_remote_backend(monkeypatch):
+    monkeypatch.setenv("SECUREPULSE_API_URL", "https://api.example.com")
+    post = Mock()
+    monkeypatch.setattr(httpx, "post", post)
+
+    with pytest.raises(ValueError, match="remote prediction APIs"):
+        request_chat_answer("What is SecurePulse?")
+
+    post.assert_not_called()
 
 
 def test_app_stops_when_configured_for_non_loopback(monkeypatch, tmp_path):
@@ -177,6 +221,25 @@ def test_synthetic_patients_page_shows_dataset_size(monkeypatch, tmp_path):
         "Dataset contains 50,000 synthetic profiles" in item.value
         for item in app.caption
     )
+
+
+def test_chatbot_page_explains_ollama_is_not_running(monkeypatch, tmp_path):
+    app = run_app(monkeypatch, tmp_path)
+
+    assert any(
+        "Local AI chatbot unavailable" in item.value for item in app.warning
+    )
+    assert any("Install Ollama" in item.value for item in app.info)
+
+
+def test_chatbot_page_explains_remote_api_restriction(monkeypatch, tmp_path):
+    monkeypatch.setenv("SECUREPULSE_API_URL", "https://api.example.com")
+    app = run_app(monkeypatch, tmp_path)
+
+    assert any(
+        REMOTE_CHAT_DISABLED_MESSAGE in item.value for item in app.warning
+    )
+    assert not any("Install Ollama" in item.value for item in app.info)
 
 
 def test_app_surfaces_audit_chain_corruption(monkeypatch, tmp_path):
