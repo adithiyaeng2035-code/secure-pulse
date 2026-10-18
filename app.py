@@ -3,25 +3,15 @@
 from __future__ import annotations
 
 import os
-import sqlite3
-from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
+from urllib.parse import urlsplit
 
+import httpx
 import pandas as pd
 import streamlit as st
 
-from modules.anomaly_detection import detect_anomaly, load_anomaly_model
-from modules.data_processor import (
-    FEATURE_COLUMNS,
-    DataValidationError,
-    prepare_patient_record,
-)
-from modules.risk_prediction import load_risk_model, predict_risk
-from modules.synthetic_audit import (
-    AuditChainIntegrityError,
-    append_synthetic_prediction_event,
-)
+from modules.data_processor import FEATURE_COLUMNS
 
 st.set_page_config(page_title="SecurePulse", page_icon="🫀", layout="wide")
 
@@ -42,6 +32,28 @@ def is_bind_address_allowed(address: str | None, *, allow_remote: bool = False) 
     return is_loopback_bind_address(address) or allow_remote
 
 
+def get_api_url() -> str:
+    api_url = os.environ.get(
+        "SECUREPULSE_API_URL", "http://127.0.0.1:8000"
+    ).rstrip("/")
+    parsed_url = urlsplit(api_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+        raise ValueError("SECUREPULSE_API_URL must be an absolute HTTP or HTTPS URL.")
+    if parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
+        raise ValueError("SECUREPULSE_API_URL cannot contain credentials, query, or fragment.")
+    try:
+        parsed_url.port
+    except ValueError as error:
+        raise ValueError("SECUREPULSE_API_URL contains an invalid port.") from error
+    hostname = parsed_url.hostname.lower()
+    is_loopback = hostname == "localhost" or is_loopback_bind_address(hostname)
+    if parsed_url.scheme == "http" and not is_loopback:
+        raise ValueError("Remote prediction APIs must use HTTPS.")
+    if parsed_url.path not in {"", "/"}:
+        raise ValueError("SECUREPULSE_API_URL must point to the API root.")
+    return api_url
+
+
 def load_stylesheet() -> None:
     stylesheet = STYLESHEET_PATH.read_text(encoding="utf-8")
     st.markdown(f"<style>{stylesheet}</style>", unsafe_allow_html=True)
@@ -51,9 +63,21 @@ def clear_demo_name() -> None:
     st.session_state["live_demo_name"] = ""
 
 
-@st.cache_resource
-def get_models():
-    return load_risk_model(), load_anomaly_model()
+def check_backend() -> str | None:
+    try:
+        response = httpx.get(f"{get_api_url()}/health", timeout=2)
+        response.raise_for_status()
+        if response.json().get("engine") != "synthetic-risk-api":
+            return "The backend responded with an unexpected engine."
+    except (httpx.HTTPError, ValueError) as error:
+        return str(error)
+    return None
+
+
+def request_prediction(record: dict[str, int | float]) -> dict[str, object]:
+    response = httpx.post(f"{get_api_url()}/predict", json=record, timeout=15)
+    response.raise_for_status()
+    return response.json()
 
 
 def main() -> None:
@@ -79,12 +103,14 @@ def main() -> None:
         "Local demo only; it has no authentication or production-grade data protection."
     )
 
-    try:
-        risk_model, anomaly_model = get_models()
-    except (FileNotFoundError, OSError, ValueError) as error:
-        st.error(f"Models could not be loaded: {error}")
-        st.code("python generate_data.py\npython train_model.py\nstreamlit run app.py")
-        return
+    backend_error = check_backend()
+    if backend_error:
+        st.error(
+            f"Prediction backend disconnected: {backend_error}. Start it in a "
+            "separate terminal with `python -m modules.api`."
+        )
+    else:
+        st.success("Prediction backend connected — local synthetic engine is ready.")
 
     patients_tab, live_tab, history_tab = st.tabs(
         ["Synthetic Patients", "Live", "History"]
@@ -193,47 +219,30 @@ def main() -> None:
             if diastolic_bp >= systolic_bp:
                 st.error("Diastolic blood pressure must be lower than systolic blood pressure.")
             else:
-                with st.status("Processing synthetic reading", expanded=True) as pipeline:
-                    st.write("1. Validate the submitted measurements.")
+                with st.status(
+                    "Sending synthetic reading to local backend", expanded=True
+                ) as pipeline:
+                    st.write("1. Send measurements to the local prediction API.")
+                    st.write("2. Validate and process measurements in the backend engine.")
+                    st.write("3. Return risk and anomaly outputs; audit stores no readings.")
                     try:
-                        features = prepare_patient_record(record)
-                    except DataValidationError as error:
-                        pipeline.update(label="Reading validation failed", state="error")
-                        st.error(f"Please correct the screening values: {error}")
+                        result = request_prediction(record)
+                    except httpx.HTTPStatusError as error:
+                        pipeline.update(label="Backend rejected the request", state="error")
+                        st.error(f"Prediction backend error: {error.response.text}")
+                    except httpx.HTTPError as error:
+                        pipeline.update(label="Backend connection failed", state="error")
+                        st.error(f"Could not reach prediction backend: {error}")
+                    except ValueError as error:
+                        pipeline.update(label="Backend configuration error", state="error")
+                        st.error(str(error))
                     else:
-                        st.write("2. Calculate the synthetic-model risk estimate.")
-                        risk = predict_risk(features, model=risk_model)
-
-                        st.write("3. Check for patterns unusual in synthetic training data.")
-                        anomaly = detect_anomaly(features, model=anomaly_model)
-
-                        st.write("4. Record a privacy-minimized local demo audit event.")
-                        audit_event = None
-                        audit_error = None
-                        try:
-                            audit_event = append_synthetic_prediction_event()
-                        except (AuditChainIntegrityError, OSError, sqlite3.Error) as error:
-                            audit_error = str(error)
-
-                        st.write("5. Refresh the session dashboard with prediction outputs only.")
-                        history = st.session_state.prediction_history
-                        history.append(
-                            {
-                                "submitted_at": datetime.now(timezone.utc).isoformat(
-                                    timespec="seconds"
-                                ),
-                                "risk_band": risk["risk_band"],
-                                "risk_probability": risk["risk_probability"],
-                                "is_anomaly": anomaly["is_anomaly"],
-                                "anomaly_score": anomaly["anomaly_score"],
-                                "audit_sequence": (
-                                    audit_event.sequence if audit_event else None
-                                ),
-                                "audit_error": audit_error,
-                            }
-                        )
+                        st.write("4. Update this browser session with prediction outputs only.")
+                        st.session_state.prediction_history.append(result)
                         pipeline.update(
-                            label="Processing complete", state="complete", expanded=True
+                            label="Backend prediction complete",
+                            state="complete",
+                            expanded=True,
                         )
 
         st.divider()
@@ -325,9 +334,9 @@ def main() -> None:
                 st.info("Submit another synthetic reading to see the estimate trend.")
             st.caption(
                 "History contains prediction summaries only and stays in memory for this "
-                "browser session. Streamlit retains active form-widget values in session "
-                "memory while the session is open; raw readings are not copied into history "
-                "or the audit chain."
+                "browser session. Readings are sent over loopback to the local backend; "
+                "Streamlit retains active widget values in memory while the session is open. "
+                "Raw readings are not copied into history or the audit chain."
             )
 
     with st.expander("Privacy notes"):
@@ -336,8 +345,9 @@ def main() -> None:
                 "The optional fictional demo name is cleared when the form is submitted and "
                 "is not used in predictions or copied to results, history, or audit. Streamlit "
                 "holds active form-widget values in session memory while the session is open. "
-                "Submitted measurements are used for the current calculation "
-                "but are not copied into session history or the audit chain. Session history "
+                "Submitted measurements are sent over loopback to the local prediction API "
+                "for the current calculation, but are not copied into session history or the "
+                "audit chain. Session history "
                 "contains prediction summaries only. A local audit chain stores only the submission "
             "timestamp and a fixed demo event type. The form does not collect patient "
             "identifiers. This demo is not designed, certified, or configured for "

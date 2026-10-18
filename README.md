@@ -15,14 +15,16 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 python generate_data.py
 python train_model.py
-streamlit run app.py
 ```
 
-Open the local URL printed by Streamlit. By default, the app binds to loopback
+Then start the backend and frontend in separate terminals as described in
+[Local frontend and backend](#local-frontend-and-backend). Open the local URL
+printed by Streamlit. By default, the app binds to loopback
 (`127.0.0.1`) and disables Streamlit usage-statistics collection. Form submissions
-are processed in memory and their readings and scores are not written to disk.
-After a successful prediction, a local demo audit chain stores only a UTC timestamp
-and a fixed event type in `data/securepulse_demo_audit.sqlite3`. Do not enter real
+are sent over loopback to the local prediction API and processed in memory; readings
+and scores are not written to disk. After a successful prediction, a local demo audit
+chain stores only a UTC timestamp and a fixed event type in
+`data/securepulse_demo_audit.sqlite3`. Do not enter real
 patient information. If you intentionally change the bind address for remote access,
 configure deployment authentication, HTTPS, and network access controls separately
 before exposing the app. The application also stops if Streamlit is configured with
@@ -30,34 +32,32 @@ a non-loopback bind address. This does not detect an external reverse proxy, tun
 or port-forward that exposes a loopback-bound server; keep those disabled unless
 deployment access controls are in place.
 
-## Google Cloud Run (private, synthetic demo)
+## Local frontend and backend
 
-Cloud Run hosting is not a data-storage backend. Submitted readings remain in
-process memory; the demo audit SQLite file is on the container's ephemeral
-filesystem and can be lost when an instance restarts. No database or real-patient
-data integration is configured.
-
-The included `Dockerfile` builds the image from the checked-in synthetic dataset
-and trains the demo models during the image build. To deploy, install and
-authenticate the Google Cloud CLI, select a project with billing and Cloud Run /
-Cloud Build permissions, then deploy with authentication required:
+SecurePulse has a separate FastAPI prediction engine. Run it and the Streamlit
+frontend in two terminals after generating the synthetic data and models:
 
 ```powershell
-gcloud config set project YOUR_PROJECT_ID
-gcloud run deploy secure-pulse `
-  --source . `
-  --region YOUR_REGION `
-  --no-allow-unauthenticated `
-  --set-env-vars SECUREPULSE_ALLOW_REMOTE=1 `
-  --max 1
+# Terminal 1: start the backend API (loopback only)
+python -m modules.api
+
+# Terminal 2: start the browser UI
+streamlit run app.py
 ```
 
-Grant `roles/run.invoker` only to the intended Google identities. For interactive
-browser access, put an approved identity-aware access layer in front of the
-service; do not change the service to allow unauthenticated access. The remote
-bind override only permits the container to listen on Cloud Run's interface; it
-does not authenticate users. The app's built-in loopback-only default remains in
-effect everywhere else. Never send real patient data to this demo.
+The UI checks `http://127.0.0.1:8000/health` and sends synthetic readings to
+`/predict`. The API validates the request, loads the models, returns the risk and
+anomaly outputs, and records only the privacy-minimized audit event. If the API is
+offline, the UI reports the connection failure and does not fall back to running
+the models itself. Set `SECUREPULSE_API_URL` only when intentionally changing the
+API address; use loopback for this local demo.
+
+This is a local service connection, not a cloud deployment or a persistent
+database. Submitted readings remain in process memory; the audit SQLite file is
+local and is not a distributed ledger. Never send real patient data to this demo.
+The container image binds the UI to its network interface only when explicitly
+configured with `SECUREPULSE_ALLOW_REMOTE=1`; use that only behind an authenticated
+deployment boundary. The image itself does not provide authentication.
 
 The results include plain-language guidance. Risk bands are software cutoffs applied
 to a model estimate for synthetic labels; they are not medical guideline thresholds or
@@ -72,6 +72,7 @@ version control accidentally; `.gitignore` does not remove files already tracked
 ## Project layout
 
 - `app.py` — local Streamlit interface with Synthetic Patients, Live, and History tabs.
+- `modules/api.py` — local FastAPI prediction engine used by the Streamlit frontend.
 - `generate_data.py` — deterministic synthetic dataset generator.
 - `train_model.py` — trains and stores the risk and anomaly models.
 - `modules/data_processor.py` — feature schema and input validation.

@@ -15,4 +15,4 @@ RUN python train_model.py \
 
 USER securepulse
 
-CMD ["sh", "-c", "exec streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT:-8080}"]
+CMD ["sh", "-c", "uvicorn modules.api:app --host 127.0.0.1 --port 8000 & exec streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT:-8080}"]
