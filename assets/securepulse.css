@@ -1,0 +1,87 @@
+:root {
+    color-scheme: light;
+}
+
+.stApp {
+    background:
+        radial-gradient(ellipse at 8% 4%, rgba(59, 130, 246, 0.17), transparent 38%),
+        radial-gradient(ellipse at 92% 18%, rgba(16, 185, 129, 0.16), transparent 34%),
+        linear-gradient(145deg, #f3f8ff 0%, #edf7ff 48%, #effcf6 100%);
+    color: #18324b;
+}
+
+[data-testid="stHeader"] {
+    background: rgba(243, 248, 255, 0.72);
+}
+
+[data-testid="stMain"] .block-container {
+    max-width: 1180px;
+    padding-top: 2.4rem;
+    padding-bottom: 3rem;
+}
+
+h1 {
+    color: #12345a;
+    letter-spacing: -0.04em;
+    font-weight: 800;
+}
+
+h3 {
+    color: #16866c;
+    font-weight: 600;
+}
+
+[data-testid="stForm"] {
+    padding: 1.5rem;
+    border: 1px solid rgba(37, 99, 235, 0.14);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.84);
+    box-shadow: 0 16px 45px rgba(25, 64, 106, 0.09);
+}
+
+[data-testid="stNumberInput"] input,
+[data-testid="stSelectbox"] > div > div {
+    border-radius: 10px;
+}
+
+[data-testid="stFormSubmitButton"] button {
+    min-height: 2.8rem;
+    border: 0;
+    border-radius: 10px;
+    background: linear-gradient(100deg, #1478d4, #0e9f78);
+    color: #fff;
+    font-weight: 700;
+    transition: filter 150ms ease, transform 150ms ease;
+}
+
+[data-testid="stFormSubmitButton"] button:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+}
+
+[data-testid="stMetric"] {
+    padding: 1rem;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.82);
+}
+
+[data-testid="stAlert"] {
+    border-radius: 14px;
+}
+
+[data-testid="stExpander"] {
+    border-color: rgba(37, 99, 235, 0.16);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.62);
+}
+
+@media (max-width: 640px) {
+    [data-testid="stMain"] .block-container {
+        padding: 1.4rem 1rem 2rem;
+    }
+
+    [data-testid="stForm"] {
+        padding: 1rem;
+    }
+}

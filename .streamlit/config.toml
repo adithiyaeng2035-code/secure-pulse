@@ -1,0 +1,16 @@
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#0e9f78"
+backgroundColor = "#f3f8ff"
+secondaryBackgroundColor = "#eaf7f3"
+textColor = "#18324b"
+font = "sans serif"
+
+[server]
+address = "127.0.0.1"
+enableCORS = true
+enableXsrfProtection = true
+enableStaticServing = false

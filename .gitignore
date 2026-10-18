@@ -1,0 +1,19 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.streamlit/secrets.toml
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Local data and generated artifacts may contain sensitive or derived information.
+/data/**
+!/data/synthetic_patient_data.csv
+/models/*.joblib
+/uploads/
+/exports/
+/output/
