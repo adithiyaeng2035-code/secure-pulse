@@ -21,7 +21,10 @@ from modules.synthetic_audit import (
 
 app = FastAPI(
     title="SecurePulse Synthetic Prediction API",
-    description="Local-only API for synthetic cardiometabolic demo predictions.",
+    description=(
+        "API for synthetic cardiometabolic demo predictions. Keep local unless "
+        "deployed behind verified authentication and access controls."
+    ),
     version="1.0.0",
 )
 

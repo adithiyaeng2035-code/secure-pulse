@@ -100,7 +100,8 @@ def main() -> None:
     st.warning(
         "This educational demo uses synthetic data. It is not a diagnosis or a substitute "
         "for advice from a qualified health professional. Do not enter real patient data. "
-        "Local demo only; it has no authentication or production-grade data protection."
+        "The app has no built-in user authentication; only use it locally or behind "
+        "verified deployment access controls."
     )
 
     backend_error = check_backend()
@@ -110,7 +111,7 @@ def main() -> None:
             "separate terminal with `python -m modules.api`."
         )
     else:
-        st.success("Prediction backend connected — local synthetic engine is ready.")
+        st.success("Prediction backend connected — synthetic engine is ready.")
 
     patients_tab, live_tab, history_tab = st.tabs(
         ["Synthetic Patients", "Live", "History"]
@@ -220,9 +221,9 @@ def main() -> None:
                 st.error("Diastolic blood pressure must be lower than systolic blood pressure.")
             else:
                 with st.status(
-                    "Sending synthetic reading to local backend", expanded=True
+                    "Sending synthetic reading to prediction backend", expanded=True
                 ) as pipeline:
-                    st.write("1. Send measurements to the local prediction API.")
+                    st.write("1. Send measurements to the configured prediction API.")
                     st.write("2. Validate and process measurements in the backend engine.")
                     st.write("3. Return risk and anomaly outputs; audit stores no readings.")
                     try:
@@ -334,7 +335,7 @@ def main() -> None:
                 st.info("Submit another synthetic reading to see the estimate trend.")
             st.caption(
                 "History contains prediction summaries only and stays in memory for this "
-                "browser session. Readings are sent over loopback to the local backend; "
+                "browser session. Readings are sent to the configured prediction API; "
                 "Streamlit retains active widget values in memory while the session is open. "
                 "Raw readings are not copied into history or the audit chain."
             )
@@ -345,7 +346,7 @@ def main() -> None:
                 "The optional fictional demo name is cleared when the form is submitted and "
                 "is not used in predictions or copied to results, history, or audit. Streamlit "
                 "holds active form-widget values in session memory while the session is open. "
-                "Submitted measurements are sent over loopback to the local prediction API "
+                "Submitted measurements are sent to the configured prediction API "
                 "for the current calculation, but are not copied into session history or the "
                 "audit chain. Session history "
                 "contains prediction summaries only. A local audit chain stores only the submission "

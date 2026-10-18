@@ -59,6 +59,31 @@ The container image binds the UI to its network interface only when explicitly
 configured with `SECUREPULSE_ALLOW_REMOTE=1`; use that only behind an authenticated
 deployment boundary. The image itself does not provide authentication.
 
+## Optional private Google Cloud Run deployment
+
+This repository does not automatically deploy itself. After installing the Google
+Cloud CLI, signing in with `gcloud auth login`, selecting a billed project, and
+ensuring the account has Cloud Run and Cloud Build permissions, deploy the
+synthetic-only container with Cloud Run authentication required:
+
+```powershell
+gcloud config set project YOUR_PROJECT_ID
+gcloud run deploy secure-pulse `
+  --source . `
+  --region asia-south1 `
+  --no-allow-unauthenticated `
+  --set-env-vars SECUREPULSE_ALLOW_REMOTE=1 `
+  --max 1
+```
+
+Replace `asia-south1` with an approved Cloud Run region for your project. Grant
+`roles/run.invoker` only to intended identities and configure an approved identity
+access layer for browser access. Do not add `--allow-unauthenticated`. A successful
+deploy command is required before a Cloud Run URL exists; pushing to GitHub alone
+does not deploy the service. The container runs the API and UI together; its audit
+SQLite file uses ephemeral container storage and is not a persistent backend.
+Never submit real patient data.
+
 The results include plain-language guidance. Risk bands are software cutoffs applied
 to a model estimate for synthetic labels; they are not medical guideline thresholds or
 real-world disease probabilities. The anomaly flag only compares profiles with
