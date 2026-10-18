@@ -19,14 +19,14 @@ SYNTHETIC_READING = {
 }
 
 
-def api_request(method, path, *, json=None):
+def api_request(method, path, *, json=None, headers=None):
     async def send_request():
         transport = httpx.ASGITransport(app=api.app)
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://securepulse.test",
         ) as client:
-            return await client.request(method, path, json=json)
+            return await client.request(method, path, json=json, headers=headers)
 
     return asyncio.run(send_request())
 
@@ -83,19 +83,73 @@ def test_prediction_rejects_invalid_or_extra_fields_without_audit(
     assert not audit_path.exists()
 
 
+def test_prediction_requires_valid_bearer_token_when_configured(monkeypatch, tmp_path):
+    monkeypatch.setenv("SECUREPULSE_API_TOKEN", "test-secret-token")
+    monkeypatch.delenv("SECUREPULSE_REQUIRE_API_TOKEN", raising=False)
+    monkeypatch.setattr(
+        synthetic_audit,
+        "DEFAULT_LEDGER_PATH",
+        tmp_path / "token-auth-audit.sqlite3",
+    )
+
+    missing_token = api_request("POST", "/predict", json=SYNTHETIC_READING)
+    invalid_token = api_request(
+        "POST",
+        "/predict",
+        json=SYNTHETIC_READING,
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert missing_token.status_code == 401
+    assert invalid_token.status_code == 401
+    assert not (tmp_path / "token-auth-audit.sqlite3").exists()
+
+    valid_token = api_request(
+        "POST",
+        "/predict",
+        json=SYNTHETIC_READING,
+        headers={"Authorization": "Bearer test-secret-token"},
+    )
+
+    assert valid_token.status_code == 200
+
+
+def test_prediction_fails_closed_when_token_is_required_but_missing(monkeypatch):
+    monkeypatch.delenv("SECUREPULSE_API_TOKEN", raising=False)
+    monkeypatch.setenv("SECUREPULSE_REQUIRE_API_TOKEN", "1")
+
+    response = api_request("POST", "/predict", json=SYNTHETIC_READING)
+
+    assert response.status_code == 503
+    assert "authentication is required" in response.json()["detail"]
+
+
 def test_chat_endpoint_returns_local_model_answer(monkeypatch):
+    monkeypatch.setenv("SECUREPULSE_API_TOKEN", "test-secret-token")
     monkeypatch.setattr(api, "ask_ollama", lambda query: f"Answer: {query}")
     monkeypatch.setattr(
         api, "get_ollama_config", lambda: ("http://127.0.0.1:11434", "llama3.2:3b")
     )
 
-    response = api_request("POST", "/chat", json={"query": "What is SecurePulse?"})
+    response = api_request(
+        "POST",
+        "/chat",
+        json={"query": "What is SecurePulse?"},
+        headers={"Authorization": "Bearer test-secret-token"},
+    )
 
     assert response.status_code == 200
     assert response.json() == {
         "answer": "Answer: What is SecurePulse?",
         "model": "llama3.2:3b",
     }
+
+
+def test_chat_endpoint_requires_bearer_token(monkeypatch):
+    monkeypatch.setenv("SECUREPULSE_API_TOKEN", "test-secret-token")
+
+    response = api_request("POST", "/chat", json={"query": "What is SecurePulse?"})
+
+    assert response.status_code == 401
 
 
 def test_chat_endpoint_surfaces_missing_ollama(monkeypatch):

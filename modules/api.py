@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from functools import lru_cache
+import hmac
 import os
 import sqlite3
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from modules.anomaly_detection import detect_anomaly, load_anomaly_model
 from modules.chatbot import (
     MAX_QUERY_LENGTH,
     OllamaUnavailableError,
+    ProjectDocsUnavailableError,
     ask_ollama,
     check_ollama,
     get_ollama_config,
@@ -34,6 +37,7 @@ app = FastAPI(
     ),
     version="1.0.0",
 )
+bearer_auth = HTTPBearer(auto_error=False)
 
 
 class SyntheticReading(BaseModel):
@@ -76,6 +80,32 @@ class ChatResponse(BaseModel):
     model: str
 
 
+def verify_api_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth),
+) -> None:
+    expected_token = os.environ.get("SECUREPULSE_API_TOKEN")
+    token_required = os.environ.get("SECUREPULSE_REQUIRE_API_TOKEN", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if not expected_token:
+        if token_required:
+            raise HTTPException(
+                status_code=503,
+                detail="Prediction API authentication is required but not configured.",
+            )
+        return
+    if credentials is None or not hmac.compare_digest(
+        credentials.credentials.encode("utf-8"), expected_token.encode("utf-8")
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="A valid bearer token is required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 @lru_cache(maxsize=1)
 def get_models() -> tuple[Any, Any]:
     return load_risk_model(), load_anomaly_model()
@@ -95,19 +125,29 @@ def chat_health() -> dict[str, str | bool]:
     return check_ollama()
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post(
+    "/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(verify_api_token)],
+)
 def create_chat_response(request: ChatRequest) -> ChatResponse:
     try:
         answer = ask_ollama(request.query)
         _, model = get_ollama_config()
     except OllamaUnavailableError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    except ProjectDocsUnavailableError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return ChatResponse(answer=answer, model=model)
 
 
-@app.post("/predict", response_model=PredictionResponse)
+@app.post(
+    "/predict",
+    response_model=PredictionResponse,
+    dependencies=[Depends(verify_api_token)],
+)
 def create_prediction(reading: SyntheticReading) -> PredictionResponse:
     try:
         risk_model, anomaly_model = get_models()
