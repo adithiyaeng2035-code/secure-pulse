@@ -1,0 +1,14 @@
+.git
+.venv
+venv
+__pycache__
+.pytest_cache
+.streamlit/secrets.toml
+*.log
+*.db
+*.sqlite
+*.sqlite3
+models/*.joblib
+uploads
+exports
+output

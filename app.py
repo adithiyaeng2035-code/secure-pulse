@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from ipaddress import ip_address
@@ -37,6 +38,10 @@ def is_loopback_bind_address(address: str | None) -> bool:
         return False
 
 
+def is_bind_address_allowed(address: str | None, *, allow_remote: bool = False) -> bool:
+    return is_loopback_bind_address(address) or allow_remote
+
+
 def load_stylesheet() -> None:
     stylesheet = STYLESHEET_PATH.read_text(encoding="utf-8")
     st.markdown(f"<style>{stylesheet}</style>", unsafe_allow_html=True)
@@ -53,10 +58,12 @@ def get_models():
 
 def main() -> None:
     bind_address = st.get_option("server.address")
-    if not is_loopback_bind_address(bind_address):
+    allow_remote = os.environ.get("SECUREPULSE_ALLOW_REMOTE") == "1"
+    if not is_bind_address_allowed(bind_address, allow_remote=allow_remote):
         st.error(
             "SecurePulse is configured for a non-local network address and will not "
-            "start. Set `server.address` to a loopback IP such as `127.0.0.1`."
+            "start. Set `server.address` to a loopback IP such as `127.0.0.1`, or "
+            "explicitly allow remote binding only behind deployment authentication."
         )
         st.stop()
 

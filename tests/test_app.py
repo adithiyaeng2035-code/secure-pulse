@@ -4,7 +4,7 @@ from pathlib import Path
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from app import is_loopback_bind_address
+from app import is_bind_address_allowed, is_loopback_bind_address
 import modules.synthetic_audit as synthetic_audit
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
@@ -24,6 +24,10 @@ def test_loopback_bind_address_check():
     assert not is_loopback_bind_address("")
     assert not is_loopback_bind_address(None)
     assert not is_loopback_bind_address("securepulse.example")
+    assert is_bind_address_allowed("127.0.0.1")
+    assert not is_bind_address_allowed("0.0.0.0")
+    assert not is_bind_address_allowed("0.0.0.0", allow_remote=False)
+    assert is_bind_address_allowed("0.0.0.0", allow_remote=True)
 
 
 def test_app_stops_when_configured_for_non_loopback(monkeypatch, tmp_path):
